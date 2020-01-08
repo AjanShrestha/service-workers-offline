@@ -2,14 +2,19 @@
 
 var curFib = 0;
 
-self.postMessage('Hello from the web worker');
-
 self.onmessage = onMessage;
 
 // **********************************
 
 function onMessage(event) {
-  console.log(`Received in web worker: ${event.data}`);
+  getNextFib();
+}
+
+function getNextFib() {
+  var fibNum = fib(curFib);
+  self.postMessage({idx: curFib, fib: fibNum});
+  curFib++;
+  setTimeout(getNextFib, 0);
 }
 
 function fib(n) {
