@@ -2,6 +2,8 @@
 
 var curFib = 0;
 
+self.postMessage('Hello from the web worker');
+
 // TODO
 
 // **********************************
