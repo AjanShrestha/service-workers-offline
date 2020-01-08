@@ -26,6 +26,7 @@ var urlsToCache = {
 self.addEventListener('install', onInstall);
 self.addEventListener('activate', onActivate);
 self.addEventListener('message', onMessage);
+self.addEventListener('fetch', onFetch);
 
 main().catch(console.error);
 
@@ -60,6 +61,16 @@ function onMessage({data}) {
       `[Service Worker] (v${version}) status update, isOnline:${isOnline}, isLoggedIn:${isLoggedIn}`
     );
   }
+}
+
+function onFetch(event) {
+  event.waitUntil(router(event.request));
+}
+
+async function router(req) {
+  var url = URL(req.url);
+  var reqURL = url.pathname;
+  var cache = await caches.open(cacheName);
 }
 
 function onActivate(event) {
