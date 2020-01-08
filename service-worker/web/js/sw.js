@@ -18,9 +18,13 @@ async function onInstall(event) {
   self.skipWaiting();
 }
 
-async function onActivate(event) {
-  console.log(`[Service Worker] (${version}) activated.`);
+function onActivate(event) {
   event.waitUntil(handleActivation());
 }
 
-async function handleActivation() {}
+async function handleActivation() {
+  // Trigger Controller change event
+  // Claim all the clients to the latest service worker
+  await clients.claim();
+  console.log(`[Service Worker] (${version}) activated.`);
+}
