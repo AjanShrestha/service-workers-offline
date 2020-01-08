@@ -24,11 +24,13 @@
     window.addEventListener('online', function online() {
       offlineIcon.classList.add('hidden');
       isOnline = true;
+      sendStatusUpdate();
     });
 
     window.addEventListener('offline', function offline() {
       offlineIcon.classList.remove('hidden');
       isOnline = false;
+      sendStatusUpdate();
     });
   }
 
@@ -41,12 +43,41 @@
       swRegistration.installing ||
       swRegistration.waiting ||
       swRegistration.active;
+    sendStatusUpdate(svcworker);
 
     navigator.serviceWorker.addEventListener(
       'controllerchange',
       function onController() {
         svcworker = navigator.serviceWorker.controller;
+        sendStatusUpdate(svcworker);
       }
     );
+
+    navigator.serviceWorker.addEventListener('message', onSWMessage);
+  }
+
+  function onSWMessage(event) {
+    var {data} = event;
+    if (data.requestStatusUpdate) {
+      console.log(
+        'Received status update request from service woker, responding...'
+      );
+      // message channel
+      sendStatusUpdate(event.ports && event.ports[0]);
+    }
+  }
+
+  function sendStatusUpdate(target) {
+    sendSWMessage({statusUpdate: {isOnline, isLoggedIn}}, target);
+  }
+
+  function sendSWMessage(msg, target) {
+    if (target) {
+      target.postMessage(msg);
+    } else if (svcworker) {
+      svcworker.postMessage(msg);
+    } else {
+      navigator.serviceWorker.controller.postMessage(msg);
+    }
   }
 })();
