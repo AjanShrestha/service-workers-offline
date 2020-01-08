@@ -1,8 +1,27 @@
 'use strict';
 
-const version = 2;
+const version = 3;
 var isOnline = true;
 var isLoggedIn = false;
+var cacheName = `ramblings-${version}`;
+
+var urlToCache = {
+  loggedOut: [
+    '/',
+    '/about',
+    '/contact',
+    '/404',
+    '/login',
+    '/offline',
+    '/css/styles.css',
+    '/js/blog.js',
+    '/js/home.js',
+    '/js/login.js',
+    '/js/add-post.js',
+    '/images/logo.gif',
+    '/images/offline.png',
+  ],
+};
 
 self.addEventListener('install', onInstall);
 self.addEventListener('activate', onActivate);
