@@ -13,7 +13,7 @@ var urlsToCache = {
     '/404',
     '/login',
     '/offline',
-    '/css/styles.css',
+    '/css/style.css',
     '/js/blog.js',
     '/js/home.js',
     '/js/login.js',
@@ -33,6 +33,7 @@ main().catch(console.error);
 
 async function main() {
   await sendMessage({requestStatusUpdate: true});
+  await cacheLoggedOutFiles();
 }
 
 async function onInstall(event) {
@@ -69,11 +70,12 @@ async function handleActivation() {
   // Trigger Controller change event
   // Claim all the clients to the latest service worker
   await clients.claim();
+  await cacheLoggedOutFiles(/*forceReload=*/ true);
   console.log(`[Service Worker] (${version}) activated.`);
 }
 
 async function cacheLoggedOutFiles(forceReload = false) {
-  var cache = await caches.match(cacheName);
+  var cache = await caches.open(cacheName);
 
   return Promise.all(
     urlsToCache.loggedOut.map(async function requestFile(url) {
