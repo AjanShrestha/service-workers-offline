@@ -60,7 +60,7 @@
     var {data} = event;
     if (data.requestStatusUpdate) {
       console.log(
-        'Received status update request from service woker, responding...'
+        'Received status update request from service worker, responding...'
       );
       // message channel
       sendStatusUpdate(event.ports && event.ports[0]);
