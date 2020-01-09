@@ -72,31 +72,27 @@ async function router(req) {
   var reqURL = url.pathname;
   var cache = await caches.open(cacheName);
 
+  // request for site's own URL?
   if (url.origin == location.origin) {
     // are we making an API request?
     if (/^\/api\/.+$/.test(reqURL)) {
-      let res;
-      if (isOnline) {
-        try {
-          let fetchOptions = {
-            method: req.method,
-            headers: req.headers,
-            credentials: 'same-origin',
-            cache: 'no-store',
-          };
-          let res = await fetch(req.url, fetchOptions);
-          if (res && res.ok) {
-            if (req.method === 'GET') {
-              await cache.put(reqURL, res.clone());
-            }
-            return res;
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }
-      res = await cache.match(reqURL);
+      let fetchOptions = {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      };
+      let res = await safeRequest(
+        reqURL,
+        req,
+        fetchOptions,
+        /*cacheResponse=*/ false,
+        /*checkCacheFirst=*/ false,
+        /*checkCacheLast*/ true,
+        /*useRequestDirectly*/ true
+      );
       if (res) {
+        if (req.method === 'GET') {
+          await cache.put(reqURL, res.clone());
+        }
         return res;
       }
 
@@ -110,65 +106,98 @@ async function router(req) {
       }
       // otherwise, just use 'network-and-cache'
       else {
-        let res;
-        if (isOnline) {
-          try {
-            let fetchOptions = {
-              method: req.method,
-              headers: req.headers,
-              cache: 'no-store',
-            };
-            let res = await fetch(req.url, fetchOptions);
-            if (res && res.ok) {
-              if (!res.headers.get('X-Not-Found')) {
-                await cache.put(reqURL, res.clone());
-              }
-              return res;
-            }
-          } catch (err) {
-            console.error(err);
-          }
-        }
-
-        // fetch failed, so try the cache
-        res = await cache.await(reqURL);
+        let fetchOptions = {
+          method: req.method,
+          headers: req.headers,
+          cache: 'no-store',
+        };
+        let res = await safeRequest(
+          reqURL,
+          req,
+          fetchOptions,
+          /*cacheResponse=*/ false,
+          /*checkCacheFirst=*/ false,
+          /*checkCacheLast*/ true
+        );
         if (res) {
+          if (!res.headers.get('X-Not-Found')) {
+            await cache.put(reqURL, res.clone());
+          }
           return res;
         }
-
         // otherwise, return an offline-friendly page
         return cache.match('/offline');
       }
     }
     // all other files use 'cache-first'
     else {
-      let res = await cache.await(reqURL);
+      let fetchOptions = {
+        method: req.method,
+        headers: req.headers,
+        cache: 'no-store',
+      };
+      let res = await safeRequest(
+        reqURL,
+        req,
+        fetchOptions,
+        /*cacheResponse=*/ true,
+        /*checkCacheFirst=*/ true
+      );
       if (res) {
         return res;
-      } else {
-        if (isOnline) {
-          try {
-            let fetchOptions = {
-              method: req.method,
-              headers: req.headers,
-              cache: 'no-store',
-            };
-            let res = await fetch(req.url, fetchOptions);
-            if (res && res.ok) {
-              await cache.put(reqURL, res.clone());
-              return res;
-            }
-          } catch (err) {
-            console.error(err);
-          }
-        }
-
-        // otherwise, force a network-level 404 response
-        return notFoundResponse();
       }
+
+      // otherwise, force a network-level 404 response
+      return notFoundResponse();
     }
   }
   // TODO: figure out CORS requests
+}
+
+async function safeRequest(
+  reqURL,
+  req,
+  options,
+  cacheResponse = false,
+  checkCacheFirst = false,
+  checkCacheLast = false,
+  useRequestDirectly = false
+) {
+  var cache = await cache.open(cacheName);
+  var res;
+
+  if (checkCacheFirst) {
+    res = await cache.match(reqURL);
+    if (res) {
+      return res;
+    }
+  }
+
+  if (isOnline) {
+    try {
+      if (useRequestDirectly) {
+        res = await fetch(req, options);
+      } else {
+        res = await fetch(req.url, options);
+      }
+
+      if (res && (res.ok || res.type == 'opaqueredirect')) {
+        if (cacheResponse) {
+          await cache.put(reqURL, res.clone());
+        }
+        return res;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+
+    if (checkCacheLast) {
+      res = await cache.match(reqURL);
+      if (res) {
+        return res;
+      }
+    }
+  }
 }
 
 function notFoundResponse() {
