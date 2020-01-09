@@ -1,6 +1,6 @@
 'use strict';
 
-const version = 4;
+const version = 6;
 var isOnline = true;
 var isLoggedIn = false;
 var cacheName = `ramblings-${version}`;
@@ -26,6 +26,7 @@ var urlsToCache = {
 self.addEventListener('install', onInstall);
 self.addEventListener('activate', onActivate);
 self.addEventListener('message', onMessage);
+self.addEventListener('fetch', onFetch);
 
 main().catch(console.error);
 
@@ -39,27 +40,6 @@ async function main() {
 async function onInstall(event) {
   console.log(`[Service Worker] (${version}) installed.`);
   self.skipWaiting();
-}
-
-async function sendMessage(msg) {
-  var allClients = await clients.matchAll({includeUncontrolled: true});
-  return Promise.all(
-    allClients.map(function clientMsg(client) {
-      // message channel for each client
-      var chan = new MessageChannel();
-      chan.port1.onmessage = onMessage;
-      return client.postMessage(msg, [chan.port2]);
-    })
-  );
-}
-
-function onMessage({data}) {
-  if (data.statusUpdate) {
-    ({isOnline, isLoggedIn} = data.statusUpdate);
-    console.log(
-      `[Service Worker] (v${version}) status update, isOnline:${isOnline}, isLoggedIn:${isLoggedIn}`
-    );
-  }
 }
 
 function onActivate(event) {
@@ -121,4 +101,275 @@ async function cacheLoggedOutFiles(forceReload = false) {
       }
     })
   );
+}
+
+async function sendMessage(msg) {
+  var allClients = await clients.matchAll({includeUncontrolled: true});
+  return Promise.all(
+    allClients.map(function clientMsg(client) {
+      // message channel for each client
+      var chan = new MessageChannel();
+      chan.port1.onmessage = onMessage;
+      return client.postMessage(msg, [chan.port2]);
+    })
+  );
+}
+
+function onMessage({data}) {
+  if (data.statusUpdate) {
+    ({isOnline, isLoggedIn} = data.statusUpdate);
+    console.log(
+      `[Service Worker] (v${version}) status update, isOnline:${isOnline}, isLoggedIn:${isLoggedIn}`
+    );
+  }
+}
+
+function onFetch(event) {
+  event.respondWith(router(event.request));
+}
+
+async function router(req) {
+  var url = new URL(req.url);
+  var reqURL = url.pathname;
+  var cache = await caches.open(cacheName);
+
+  // request for site's own URL?
+  if (url.origin == location.origin) {
+    // are we making an API request?
+    if (/^\/api\/.+$/.test(reqURL)) {
+      let fetchOptions = {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      };
+      let res = await safeRequest(
+        reqURL,
+        req,
+        fetchOptions,
+        /*cacheResponse=*/ false,
+        /*checkCacheFirst=*/ false,
+        /*checkCacheLast=*/ true,
+        /*useRequestDirectly=*/ true
+      );
+      if (res) {
+        if (req.method == 'GET') {
+          await cache.put(reqURL, res.clone());
+        }
+        return res;
+      }
+
+      return notFoundResponse();
+    }
+    // are we requesting a page?
+    else if (req.headers.get('Accept').includes('text/html')) {
+      // login-aware requests?
+      if (/^\/(?:login|logout|add-post)$/.test(reqURL)) {
+        let res;
+
+        if (reqURL == '/login') {
+          if (isOnline) {
+            let fetchOptions = {
+              method: req.method,
+              headers: req.headers,
+              credentials: 'same-origin',
+              cache: 'no-store',
+              redirect: 'manual',
+            };
+            res = await safeRequest(reqURL, req, fetchOptions);
+            if (res) {
+              if (res.type == 'opaqueredirect') {
+                return Response.redirect('/add-post', 307);
+              }
+              return res;
+            }
+            if (isLoggedIn) {
+              return Response.redirect('/add-post', 307);
+            }
+            res = await cache.match('/login');
+            if (res) {
+              return res;
+            }
+            return Response.redirect('/', 307);
+          } else if (isLoggedIn) {
+            return Response.redirect('/add-post', 307);
+          } else {
+            res = await cache.match('/login');
+            if (res) {
+              return res;
+            }
+            return cache.match('/offline');
+          }
+        } else if (reqURL == '/logout') {
+          if (isOnline) {
+            let fetchOptions = {
+              method: req.method,
+              headers: req.headers,
+              credentials: 'same-origin',
+              cache: 'no-store',
+              redirect: 'manual',
+            };
+            res = await safeRequest(reqURL, req, fetchOptions);
+            if (res) {
+              if (res.type == 'opaqueredirect') {
+                return Response.redirect('/', 307);
+              }
+              return res;
+            }
+            if (isLoggedIn) {
+              isLoggedIn = false;
+              await sendMessage('force-logout');
+              await delay(100);
+            }
+            return Response.redirect('/', 307);
+          } else if (isLoggedIn) {
+            isLoggedIn = false;
+            await sendMessage('force-logout');
+            await delay(100);
+            return Response.redirect('/', 307);
+          } else {
+            return Response.redirect('/', 307);
+          }
+        } else if (reqURL == '/add-post') {
+          if (isOnline) {
+            let fetchOptions = {
+              method: req.method,
+              headers: req.headers,
+              credentials: 'same-origin',
+              cache: 'no-store',
+            };
+            res = await safeRequest(
+              reqURL,
+              req,
+              fetchOptions,
+              /*cacheResponse=*/ true
+            );
+            if (res) {
+              return res;
+            }
+            res = await cache.match(isLoggedIn ? '/add-post' : '/login');
+            if (res) {
+              return res;
+            }
+            return Response.redirect('/', 307);
+          } else if (isLoggedIn) {
+            res = await cache.match('/add-post');
+            if (res) {
+              return res;
+            }
+            return cache.match('/offline');
+          } else {
+            res = await cache.match('/login');
+            if (res) {
+              return res;
+            }
+            return cache.match('/offline');
+          }
+        }
+      }
+      // otherwise, just use 'network-and-cache'
+      else {
+        let fetchOptions = {
+          method: req.method,
+          headers: req.headers,
+          cache: 'no-store',
+        };
+        let res = await safeRequest(
+          reqURL,
+          req,
+          fetchOptions,
+          /*cacheResponse=*/ false,
+          /*checkCacheFirst=*/ false,
+          /*checkCacheLast=*/ true
+        );
+        if (res) {
+          if (!res.headers.get('X-Not-Found')) {
+            await cache.put(reqURL, res.clone());
+          }
+          return res;
+        }
+
+        // otherwise, return an offline-friendly page
+        return cache.match('/offline');
+      }
+    }
+    // all other files use 'cache-first'
+    else {
+      let fetchOptions = {
+        method: req.method,
+        headers: req.headers,
+        cache: 'no-store',
+      };
+      let res = await safeRequest(
+        reqURL,
+        req,
+        fetchOptions,
+        /*cacheResponse=*/ true,
+        /*checkCacheFirst=*/ true
+      );
+      if (res) {
+        return res;
+      }
+
+      // otherwise, force a network-level 404 response
+      return notFoundResponse();
+    }
+  }
+}
+
+async function safeRequest(
+  reqURL,
+  req,
+  options,
+  cacheResponse = false,
+  checkCacheFirst = false,
+  checkCacheLast = false,
+  useRequestDirectly = false
+) {
+  var cache = await caches.open(cacheName);
+  var res;
+
+  if (checkCacheFirst) {
+    res = await cache.match(reqURL);
+    if (res) {
+      return res;
+    }
+  }
+
+  if (isOnline) {
+    try {
+      if (useRequestDirectly) {
+        res = await fetch(req, options);
+      } else {
+        res = await fetch(req.url, options);
+      }
+
+      if (res && (res.ok || res.type == 'opaqueredirect')) {
+        if (cacheResponse) {
+          await cache.put(reqURL, res.clone());
+        }
+        return res;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  if (checkCacheLast) {
+    res = await cache.match(reqURL);
+    if (res) {
+      return res;
+    }
+  }
+}
+
+function notFoundResponse() {
+  return new Response('', {
+    status: 404,
+    statusText: 'Not Found',
+  });
+}
+
+function delay(ms) {
+  return new Promise(function c(res) {
+    setTimeout(res, ms);
+  });
 }
