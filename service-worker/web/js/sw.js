@@ -42,6 +42,67 @@ async function onInstall(event) {
   self.skipWaiting();
 }
 
+function onActivate(event) {
+  event.waitUntil(handleActivation());
+}
+
+async function handleActivation() {
+  await clearCaches();
+  await cacheLoggedOutFiles(/*forceReload=*/ true);
+  // Trigger Controller change event
+  // Claim all the clients to the latest service worker
+  await clients.claim();
+  console.log(`[Service Worker] (${version}) activated.`);
+}
+
+async function clearCaches() {
+  var cacheNames = await caches.keys();
+  var oldCacheNames = cacheNames.filter(function matchOldCache(cacheName) {
+    if (/^ramblings-\d+$/.test(cacheName)) {
+      let [, cacheVersion] = cacheName.match(/^ramblings-(\d+)$/);
+      cacheVersion =
+        cacheVersion !== null ? Number(cacheVersion) : cacheVersion;
+      return cacheVersion > 0 && cacheVersion != version;
+    }
+  });
+  return Promise.all(
+    oldCacheNames.map(function deleteCache(cacheName) {
+      return caches.delete(cacheName);
+    })
+  );
+}
+
+async function cacheLoggedOutFiles(forceReload = false) {
+  var cache = await caches.open(cacheName);
+
+  return Promise.all(
+    urlsToCache.loggedOut.map(async function requestFile(url) {
+      try {
+        let res;
+
+        if (!forceReload) {
+          res = await cache.match(url);
+          if (res) {
+            return res;
+          }
+        }
+
+        let fetchOptions = {
+          method: 'GET',
+          cache: 'no-cache',
+          credentials: 'omit',
+        };
+        res = await fetch(url, fetchOptions);
+        if (res.ok) {
+          await cache.put(url, res); // res.clone());
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    })
+  );
+}
+
 async function sendMessage(msg) {
   var allClients = await clients.matchAll({includeUncontrolled: true});
   return Promise.all(
@@ -102,7 +163,107 @@ async function router(req) {
     else if (req.headers.get('Accept').includes('text/html')) {
       // login-aware requests?
       if (/^\/(?:login|logout|add-post)$/.test(reqURL)) {
-        // TODO
+        let res;
+
+        if (reqURL == '/login') {
+          if (isOnline) {
+            let fetchOptions = {
+              method: req.method,
+              headers: req.headers,
+              credentials: 'same-origin',
+              cache: 'no-store',
+              redirect: 'manual',
+            };
+            res = await safeRequest(reqURL, req, fetchOptions);
+            if (res) {
+              if (res.type == 'opaqueredirect') {
+                return Response.redirect('/add-post', 307);
+              }
+              return res;
+            }
+            if (isLoggedIn) {
+              return Response.redirect('/add-post', 307);
+            }
+            res = await cache.match('/login');
+            if (res) {
+              return res;
+            }
+            return Response.redirect('/', 307);
+          } else if (isLoggedIn) {
+            return Response.redirect('/add-post', 307);
+          } else {
+            res = await cache.match('/login');
+            if (res) {
+              return res;
+            }
+            return cache.match('/offline');
+          }
+        } else if (reqURL == '/logout') {
+          if (isOnline) {
+            let fetchOptions = {
+              method: req.method,
+              headers: req.headers,
+              credentials: 'same-origin',
+              cache: 'no-store',
+              redirect: 'manual',
+            };
+            res = await safeRequest(reqURL, req, fetchOptions);
+            if (res) {
+              if (res.type == 'opaqueredirect') {
+                return Response.redirect('/', 307);
+              }
+              return res;
+            }
+            if (isLoggedIn) {
+              isLoggedIn = false;
+              await sendMessage('force-logout');
+              await delay(100);
+            }
+            return Response.redirect('/', 307);
+          } else if (isLoggedIn) {
+            isLoggedIn = false;
+            await sendMessage('force-logout');
+            await delay(100);
+            return Response.redirect('/', 307);
+          } else {
+            return Response.redirect('/', 307);
+          }
+        } else if (reqURL == '/add-post') {
+          if (isOnline) {
+            let fetchOptions = {
+              method: req.method,
+              headers: req.headers,
+              credentials: 'same-origin',
+              cache: 'no-store',
+            };
+            res = await safeRequest(
+              reqURL,
+              req,
+              fetchOptions,
+              /*cacheResponse=*/ true
+            );
+            if (res) {
+              return res;
+            }
+            res = await cache.match(isLoggedIn ? '/add-post' : '/login');
+            if (res) {
+              return res;
+            }
+            return Response.redirect('/', 307);
+          } else if (isLoggedIn) {
+            res = await cache.match('/add-post');
+            if (res) {
+              return res;
+            }
+            return cache.match('/offline');
+          } else {
+            res = await cache.match('/login');
+            if (res) {
+              return res;
+            }
+            return cache.match('/offline');
+          }
+        }
       }
       // otherwise, just use 'network-and-cache'
       else {
@@ -204,63 +365,8 @@ function notFoundResponse() {
   return new Response('', {status: 404, statusText: 'Not Found'});
 }
 
-function onActivate(event) {
-  event.waitUntil(handleActivation());
-}
-
-async function handleActivation() {
-  await clearCaches();
-  await cacheLoggedOutFiles(/*forceReload=*/ true);
-  // Trigger Controller change event
-  // Claim all the clients to the latest service worker
-  await clients.claim();
-  console.log(`[Service Worker] (${version}) activated.`);
-}
-
-async function clearCaches() {
-  var cacheNames = await caches.keys();
-  var oldCacheNames = cacheNames.filter(function matchOldCache(cacheName) {
-    if (/^ramblings-\d+$/.test(cacheName)) {
-      let [, cacheVersion] = cacheName.match(/^ramblings-(\d+)$/);
-      cacheVersion =
-        cacheVersion !== null ? Number(cacheVersion) : cacheVersion;
-      return cacheVersion > 0 && cacheVersion != version;
-    }
+function delay(ms) {
+  return new Promise(function c(res) {
+    setTimeout(res, ms);
   });
-  return Promise.all(
-    oldCacheNames.map(function deleteCache(cacheName) {
-      return caches.delete(cacheName);
-    })
-  );
-}
-
-async function cacheLoggedOutFiles(forceReload = false) {
-  var cache = await caches.open(cacheName);
-
-  return Promise.all(
-    urlsToCache.loggedOut.map(async function requestFile(url) {
-      try {
-        let res;
-
-        if (!forceReload) {
-          res = await cache.match(url);
-          if (res) {
-            return res;
-          }
-        }
-
-        let fetchOptions = {
-          method: 'GET',
-          cache: 'no-cache',
-          credentials: 'omit',
-        };
-        res = await fetch(url, fetchOptions);
-        if (res.ok) {
-          await cache.put(url, res); // res.clone());
-        }
-      } catch (error) {
-        console.error(error);
-      }
-    })
-  );
 }
