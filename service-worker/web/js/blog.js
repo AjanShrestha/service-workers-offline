@@ -64,6 +64,10 @@
       );
       // message channel
       sendStatusUpdate(event.ports && event.ports[0]);
+    } else if (data == 'force-logout') {
+      document.cookie = 'isLoggedIn=';
+      isLoggedIn = false;
+      sendStatusUpdate();
     }
   }
 

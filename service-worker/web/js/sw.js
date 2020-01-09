@@ -1,6 +1,6 @@
 'use strict';
 
-const version = 5;
+const version = 6;
 var isOnline = true;
 var isLoggedIn = false;
 var cacheName = `ramblings-${version}`;
@@ -147,11 +147,11 @@ async function router(req) {
         fetchOptions,
         /*cacheResponse=*/ false,
         /*checkCacheFirst=*/ false,
-        /*checkCacheLast*/ true,
-        /*useRequestDirectly*/ true
+        /*checkCacheLast=*/ true,
+        /*useRequestDirectly=*/ true
       );
       if (res) {
-        if (req.method === 'GET') {
+        if (req.method == 'GET') {
           await cache.put(reqURL, res.clone());
         }
         return res;
@@ -278,7 +278,7 @@ async function router(req) {
           fetchOptions,
           /*cacheResponse=*/ false,
           /*checkCacheFirst=*/ false,
-          /*checkCacheLast*/ true
+          /*checkCacheLast=*/ true
         );
         if (res) {
           if (!res.headers.get('X-Not-Found')) {
@@ -286,6 +286,7 @@ async function router(req) {
           }
           return res;
         }
+
         // otherwise, return an offline-friendly page
         return cache.match('/offline');
       }
@@ -312,7 +313,6 @@ async function router(req) {
       return notFoundResponse();
     }
   }
-  // TODO: figure out CORS requests
 }
 
 async function safeRequest(
@@ -324,7 +324,7 @@ async function safeRequest(
   checkCacheLast = false,
   useRequestDirectly = false
 ) {
-  var cache = await cache.open(cacheName);
+  var cache = await caches.open(cacheName);
   var res;
 
   if (checkCacheFirst) {
@@ -351,18 +351,21 @@ async function safeRequest(
     } catch (err) {
       console.error(err);
     }
+  }
 
-    if (checkCacheLast) {
-      res = await cache.match(reqURL);
-      if (res) {
-        return res;
-      }
+  if (checkCacheLast) {
+    res = await cache.match(reqURL);
+    if (res) {
+      return res;
     }
   }
 }
 
 function notFoundResponse() {
-  return new Response('', {status: 404, statusText: 'Not Found'});
+  return new Response('', {
+    status: 404,
+    statusText: 'Not Found',
+  });
 }
 
 function delay(ms) {
