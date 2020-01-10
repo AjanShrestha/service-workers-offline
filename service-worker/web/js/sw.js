@@ -1,6 +1,8 @@
 'use strict';
 
-const version = 7;
+importScripts('/js/external/idb-keyval-iife.min.js');
+
+const version = 8;
 var isOnline = true;
 var isLoggedIn = false;
 var cacheName = `ramblings-${version}`;
@@ -19,6 +21,7 @@ var urlsToCache = {
     '/js/home.js',
     '/js/login.js',
     '/js/add-post.js',
+    '/js/external/idb-keyval-iife.min.js',
     '/images/logo.gif',
     '/images/offline.png',
   ],
@@ -252,6 +255,10 @@ async function router(req) {
         if (req.method == 'GET') {
           await cache.put(reqURL, res.clone());
         }
+        // clear offline-backup of successful post?
+        else if (reqURL == '/api/add-post') {
+          await idbKeyval.del('add-post-backup');
+        }
         return res;
       }
 
@@ -381,6 +388,8 @@ async function router(req) {
         if (res) {
           if (!res.headers.get('X-Not-Found')) {
             await cache.put(reqURL, res.clone());
+          } else {
+            await cache.delete(reqURL);
           }
           return res;
         }

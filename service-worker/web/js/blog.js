@@ -1,4 +1,4 @@
-(function Blog() {
+(function Blog(global) {
   'use strict';
 
   var offlineIcon;
@@ -8,9 +8,13 @@
   var swRegistration;
   var svcworker;
 
-  document.addEventListener('DOMContentLoaded', ready, false);
+  if (usingSW) {
+    initServiceWorker().catch(console.error);
+  }
 
-  initServiceWorker().catch(console.error);
+  global.isBlogOnline = isBlogOnline;
+
+  document.addEventListener('DOMContentLoaded', ready, false);
 
   // **********************************
 
@@ -32,6 +36,10 @@
       isOnline = false;
       sendStatusUpdate();
     });
+  }
+
+  function isBlogOnline() {
+    return isOnline;
   }
 
   async function initServiceWorker() {
@@ -84,4 +92,4 @@
       navigator.serviceWorker.controller.postMessage(msg);
     }
   }
-})();
+})(window);
