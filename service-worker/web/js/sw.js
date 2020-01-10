@@ -1,9 +1,10 @@
 'use strict';
 
-const version = 6;
+const version = 7;
 var isOnline = true;
 var isLoggedIn = false;
 var cacheName = `ramblings-${version}`;
+var allPostsCaching = false;
 
 var urlsToCache = {
   loggedOut: [
@@ -35,11 +36,16 @@ main().catch(console.error);
 async function main() {
   await sendMessage({requestStatusUpdate: true});
   await cacheLoggedOutFiles();
+  return cacheAllPosts();
 }
 
 async function onInstall(event) {
+  await cacheLoggedOutFiles(/*forceReload=*/ true);
   console.log(`[Service Worker] (${version}) installed.`);
   self.skipWaiting();
+
+  // spin off background caching of all past posts (over time)
+  cacheAllPosts(/*forceReload=*/ true).catch(console.error);
 }
 
 function onActivate(event) {
@@ -70,6 +76,98 @@ async function clearCaches() {
       return caches.delete(cacheName);
     })
   );
+}
+
+async function cacheAllPosts(forceReload = false) {
+  // already caching the posts?
+  if (allPostsCaching) {
+    return;
+  }
+  allPostsCaching = true;
+  await delay(5000);
+
+  var cache = await caches.open(cacheName);
+  var postIDs;
+
+  try {
+    if (isOnline) {
+      let fetchOptions = {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'omit',
+      };
+      let res = await fetch('/api/get-posts', fetchOptions);
+      if (res && res.ok) {
+        await cache.put('/api/get-posts', res.clone());
+        postIDs = await res.json();
+      }
+    } else {
+      let res = await cache.match('/api/get-posts');
+      if (res) {
+        let resCopy = res.clone();
+        postIDs = await res.json();
+      }
+      // caching not started, try to start again (later)
+      else {
+        allPostsCaching = false;
+        return cacheAllPosts(forceReload);
+      }
+    }
+  } catch (err) {
+    console.error(err);
+  }
+
+  if (postIDs && postIDs.length > 0) {
+    return cachePost(postIDs.shift());
+  } else {
+    allPostsCaching = false;
+  }
+
+  // *************************
+
+  async function cachePost(postID) {
+    var postURL = `/post/${postID}`;
+    var needCaching = true;
+
+    if (!forceReload) {
+      let res = await cache.match(postURL);
+      if (res) {
+        needCaching = false;
+      }
+    }
+
+    if (needCaching) {
+      await delay(10000);
+      if (isOnline) {
+        try {
+          let fetchOptions = {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'omit',
+          };
+          let res = await fetch(postURL, fetchOptions);
+          if (res && res.ok) {
+            await cache.put(postURL, res.clone());
+            needCaching = false;
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      // failed, try caching this post again?
+      if (needCaching) {
+        return cachePost(postID);
+      }
+    }
+
+    // any more posts to cache?
+    if (postIDs.length > 0) {
+      return cachePost(postIDs.shift());
+    } else {
+      allPostsCaching = false;
+    }
+  }
 }
 
 async function cacheLoggedOutFiles(forceReload = false) {
